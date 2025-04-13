@@ -1,0 +1,224 @@
+---
+title: "620proj"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(jsonlite)
+library(httr2)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+library(readr)
+```
+
+#Data prep
+
+```{r}
+source("/Users/gj/Desktop/Winter25/BIOS620/final project/code/wrangle.R")
+
+#| eval: false
+api <- "https://data.cdc.gov/resource/pwn4-m3yp.json"
+cases_raw <- request(api) |> 
+  req_url_query("$limit" = 10000000) |>
+  req_perform() |> 
+  resp_body_json(simplifyVector = TRUE)
+
+
+cases = "https://data.cdc.gov/resource/pwn4-m3yp.json"
+deaths = "https://data.cdc.gov/resource/r8kw-7aab.json"
+
+source(file.path(getwd(), "./code/funcs.R"))
+
+cases_raw = get_cdc_data(cases)
+deaths_raw = get_cdc_data(deaths)
+
+```
+
+```{r}
+cases_raw  = cases_raw |>
+  select(start_date, state, new_cases) |>  # Keep only relevant columns
+  mutate(
+    week = epiweek(start_date),
+    # Extract MMWR week from start_date
+    year = epiyear(start_date),
+    # Extract MMWR year from start_date
+    cases = as.integer(new_cases) # Convert new_cases to integer for consistency
+  ) |>
+  select(-start_date, -new_cases)
+
+deaths_raw = deaths_raw|>
+  filter(state %in% population$state_name)|> #since the state is full name, and also have united state on it, we fix it
+  mutate(death = parse_number(covid_19_deaths))|> #change the name
+  mutate(date = as_date(ymd_hms(end_date)))|> #convert date
+  mutate(mmwr_year = epiyear(date),mmwr_week = as.numeric(mmwr_week))|> #convert date and convert mmwr_week to numeric
+  select(state, mmwr_week, mmwr_year, death)|> #select needed variables 
+  arrange(state, mmwr_year, mmwr_week)
+```
+
+#Task 1
+
+```{r}
+## Make dates data frame
+all_dates <- data.frame(date = seq(make_date(2020, 1, 25), make_date(2021, 12, 31), by = "week")) |>
+  mutate(date = ceiling_date(date, unit = "week", week_start = 7) - days(1)) |>
+  mutate(mmwr_year = epiyear(date), mmwr_week = epiweek(date))
+
+#Uncomment to run
+
+dates_and_pop <- cross_join(all_dates, data.frame(state = unique(population$state))) |> left_join(population, by = c("state", "mmwr_year" = "year"))
+
+dat = dates_and_pop|>
+  left_join(cases_raw, by = c("state", "mmwr_week" = "week","mmwr_year" = "year"))|>
+  left_join(deaths_raw, by = c("state_name" = "state", "mmwr_year","mmwr_week"))|>
+  arrange(date, state)
+
+
+dat1 = dat |>
+  mutate(
+    cases_rate = (cases / population) * 100000,
+    deaths_rate = (death / population) * 100000
+  ) |>
+  pivot_longer(
+    cols = c(cases_rate, deaths_rate),
+    names_to = "name",
+    values_to = "rate"
+  )
+
+wave_periods <- tibble(
+  xmin = as.Date(c("2020-03-01", "2020-10-01", "2021-07-01")),
+  xmax = as.Date(c("2020-06-30", "2021-02-28", "2021-10-31")),
+  wave = c("Wave 1", "Wave 2", "Wave 3")
+)
+
+ggplot(dat1, aes(
+  x = date,
+  y = rate,
+  group = state,
+  color = factor(region)
+)) +
+  geom_rect(data = wave_periods,
+            aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+            inherit.aes = FALSE,
+            fill = "grey70", alpha = 0.3) +
+  geom_line(show.legend = TRUE) +
+  facet_wrap(~ name, scales = "free_y", ncol = 1) +
+  labs(title = "COVID-19 Case and Death Rates by Region",
+       subtitle = "Shaded areas indicate pandemic waves",
+       x = "Date", y = "Rate per 100,000") +
+  theme_minimal()
+```
+
+We are dividing the pandemic period from 2020/1/25 to 2021/12/31 into three waves.
+
+Wave 1: March 2020 – June 2020 A sharp spike in deaths per 100,000 is seen during early 2020, especially in regions 1–3. Case rates are relatively low (likely due to limited testing), but the early death rate surge suggests this was the initial major wave.
+
+Wave 2: October 2020 – February 2021 Both case and death rates show a dramatic rise, with a peak around January 2021. This is the most intense wave in terms of simultaneous peaks across all regions, in both metrics. Clear, synchronized spikes support this as the largest national wave.
+
+Wave 3: July 2021 – October 2021 A resurgence in cases, peaking around August–September 2021. Death rates also increase, though less sharply than Wave 2. This wave aligns with the Delta variant surge and is clearly visible across most regions.
+
+#Task 2
+
+```{r}
+dat1 <- dat1 |>
+  mutate(wave = case_when(
+    date >= as.Date("2020-03-01") & date <= as.Date("2020-06-30") ~ "Wave 1",
+    date >= as.Date("2020-10-01") & date <= as.Date("2021-02-28") ~ "Wave 2",
+    date >= as.Date("2021-07-01") & date <= as.Date("2021-10-31") ~ "Wave 3"
+  ))
+
+wave_deaths_by_state <- dat1 %>%
+  filter(name == "deaths_rate", !is.na(wave)) %>%
+  group_by(state_name, wave) %>%
+  summarise(total_death_rate = sum(rate, na.rm = TRUE), .groups = "drop")
+
+ggplot(wave_deaths_by_state, aes(x = reorder(state_name, -total_death_rate), y = wave, fill = total_death_rate)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(name = "Deaths per 100k") +
+  labs(title = "COVID-19 Death Rate by State and Wave",
+       x = "State", y = "Wave") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+top3 <- wave_deaths_by_state %>%
+  group_by(wave) %>%
+  arrange(desc(total_death_rate)) %>%
+  slice_head(n = 3)
+
+bottom3 <- wave_deaths_by_state %>%
+  group_by(wave) %>%
+  arrange(total_death_rate) %>%
+  slice_head(n = 3)
+
+top_bottom <- bind_rows(top3, bottom3) %>%
+  arrange(wave, desc(total_death_rate))
+
+ggplot(top_bottom, aes(x = reorder(state_name, total_death_rate), y = total_death_rate, fill = wave)) +
+  geom_col() +
+  facet_wrap(~ wave, scales = "free_y") +
+  coord_flip() +
+  scale_fill_viridis_d() +
+  labs(title = "Top 3 and Bottom 3 States by COVID-19 Death Rate per Wave",
+       x = "State",
+       y = "Deaths per 100,000") +
+  theme_minimal()
+```
+
+In Wave 1: New Jersey (149k), Connecticut (122k) and Massachusetts (110k) is the top three states, which is very high death rates early in the pandemic. Alaska, Hawaii and Montana have zero death rate which has the lowest death rate states.
+
+In Wave 2: South Dakota (188k), North Dakota (176k), Oklahoma (168k) show very high intensity in the bright yellow-green color, suggesting a severe outbreak in the pandemic. Alaska (26k), Vermont (11k) and Hawaii (9k) are the top 3 lowest death rate states during the most strong pandemic wave.
+
+In Wave 3: Florida (108k), Mississippi (97k), Alabama (95k), from grass green to light green color. District of Columbia (12k), Rhode Island (12k) and Vermont (9k) are the the top 3 lowest death rate states during the wave 3.
+
+```{r}
+library(gganimate)
+library(usmap)
+
+state_map <- usmap::us_map() %>%
+  distinct(full = full, abbr = abbr)
+
+map_data <- dat1 %>%
+  filter(name == "deaths_rate") %>%
+  group_by(state_name, date) %>%
+  summarise(rate = sum(rate, na.rm = TRUE), .groups = "drop") %>%
+  inner_join(state_map, by = c("state_name" = "full")) %>%
+  rename(state = abbr)
+
+p <- plot_usmap(data = map_data, values = "rate", regions = "states") +
+  scale_fill_viridis_c(name = "Deaths per 100k") +
+  labs(title = "COVID-19 Weekly Death Rates by State",
+       subtitle = "Week of {frame_time}",
+       caption = "Source: dat1") +
+  transition_time(date) +
+  ease_aes("linear") +
+  theme(legend.position = "right")
+
+anim <<- animate(p, nframes = 100, fps = 5, width = 1000, height = 600, renderer = av_renderer())
+
+```
+
+#Task 3
+
+```{r}
+cfr_wave <- dat1 %>%
+  pivot_wider(names_from = name, values_from = rate) %>%
+  filter(!is.na(wave), cases_rate > 0) %>%
+  mutate(cfr = (deaths_rate / cases_rate) * 100) %>%
+  group_by(wave) %>%
+  summarise(avg_cfr = mean(cfr, na.rm = TRUE))
+
+ggplot(cfr_wave, aes(x = wave, y = avg_cfr, fill = avg_cfr)) +
+  geom_col(width = 0.6, color = "white", show.legend = FALSE) +
+  geom_text(aes(label = round(avg_cfr, 2)), vjust = -0.5, size = 5, color = "black") +
+  scale_fill_gradient(low = "blue", high = "red") +
+  labs(
+    title = "Average Case Fatality Rate (CFR) by COVID-19 Wave",
+    subtitle = "Death rate among confirmed COVID-19 cases",
+    x = "Wave",
+    y = "CFR (%)"
+  ) +
+  ylim(0, max(cfr_wave$avg_cfr) + 1) +
+  theme_minimal(base_size = 15)
+```
