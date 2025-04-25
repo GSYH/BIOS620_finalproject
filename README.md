@@ -121,11 +121,30 @@ We trained models on Wave 2 data and applied them to predict excess mortality ra
   ```
 A comparative plot was generated to visualize how linear, LOESS, and spline models fit the Wave 3 data, with a focus on cases ≤ 1000 per 100,000 population.
 Output:
-<img src=plot/p10.png>
+<img src=plot/p6.png>
 
 ### 2. Cross-Wave Prediction and Performance Evaluation
 We performed cross-wave predictions by fitting models on one wave and testing them on other waves.
 Performance was summarized using Root Mean Square Error (RMSE) and R^2 values.
+```r
+#RMSE
+summary_stats <- results_ci |>
+  filter(complete.cases(excess_rate, fit)) |>
+  group_by(model_wave, test_wave) |>
+  summarise(rmse = sqrt(mean((excess_rate - fit)^2)),
+            r2 = cor(excess_rate, fit)^2,
+            .groups = "drop")
+
+summary_stats |>
+  mutate(RMSE = round(rmse, 2),
+         R2 = round(r2, 3)) |>
+  select(model_wave, test_wave, RMSE, R2) |>
+  kable(
+    caption = "Cross-Wave Prediction Performance (Linear Model)",
+    col.names = c("Trained on", "Tested on", "RMSE", "R²")
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
 Performance Table:
 <img src=plot/RMSE.jpg>
 
@@ -133,8 +152,15 @@ Performance Table:
 To examine model generalizability, we compared:
 -  A model trained on Wave 1 data predicting Wave 2
 -  A model trained on Wave 3 data predicting Wave 2
+```r
+w1_on_w2 <- results_ci |> filter(model_wave == "Wave 1", test_wave == "Wave 2")
+w3_on_w2 <- results_ci |> filter(model_wave == "Wave 3", test_wave == "Wave 2")
+
+w1_on_w2$Model <- "Trained on Wave 1"
+w3_on_w2$Model <- "Trained on Wave 3"
+```
 Output:
-<img src=plot/>
+<img src=plot/p7.png>
 
 <br>
 
