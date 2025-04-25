@@ -1,0 +1,590 @@
+---
+title: "final-project"
+---
+
+---
+title: "620 final project"
+format: pdf
+authors: Yiqiao Zhu / Shuoyuan Gao
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(jsonlite)
+library(httr2)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+library(stringr)
+library(tibble)
+library(kableExtra)
+library(zoo)
+library(splines)
+```
+
+# Data prep
+
+```{r}
+#estimated population(2020/4/1-2024/7/1)
+library(readxl)
+pop_raw <- read_excel("C:/Users/zyq11/Desktop/NST-EST2024-POP.xlsx",skip = 8)
+
+names(pop_raw)[1:7] <- c("state_name","pop_2020","pop_2020_est","pop_2021_est","pop_2022_est","pop_2023_est","pop_2024_est")
+pop_raw <- pop_raw |>
+  mutate(state_name = str_remove(state_name, "^\\."))
+
+footer_keywords <- c(
+  "Census Bureau", "Note:", "Suggested Citation", 
+  "Annual Estimates", "Source:", "Release Date", NA
+)
+pop_cleaned <- pop_raw |>
+  filter(
+    !state_name %in% c("Puerto Rico"),
+    !str_detect(state_name, paste(footer_keywords, collapse = "|")),
+    !is.na(state_name)
+  )|>
+  select(-pop_2020)
+
+pop_cleaned <- pop_cleaned |>
+  mutate(across(starts_with("pop_20"), ~ as.numeric(.)))
+
+population <- pop_cleaned |>
+  pivot_longer(
+    cols = starts_with("pop_20"),
+    names_to = "year",
+    names_pattern = "pop_(\\d+)_est",
+    values_to = "population"
+  ) |>
+  mutate(year = as.integer(year))|>
+  mutate(
+    state = case_when(
+      state_name == "District of Columbia" ~ "DC",
+      state_name == "Puerto Rico" ~ "PR",
+      TRUE ~ state.abb[match(state_name, state.name)]
+    )
+  )
+
+url <- "https://github.com/datasciencelabs/2024/raw/refs/heads/main/data/regions.json"
+
+regions <- fromJSON(url) |>
+  mutate(region = as.character(region)) |>
+  mutate(region = as.factor(region)) |>
+  mutate(region_name = case_when(
+    region_name %in% c("New York and New Jersey", "Puerto Rico and Virgin Islands") ~ "nyisland",
+    TRUE ~ region_name
+  )) |>
+  unnest(states) |>
+  rename(state_name = states)
+
+
+population <- population|>
+  left_join(regions, by = "state_name") #where we combine these
+```
+
+```{r}
+get_cdc_data <- function(url_name) {
+  url_name <- request(url_name) |> 
+    req_url_query("$limit" = 10000000) |>
+    req_perform() |> 
+    resp_body_json(simplifyVector = TRUE)
+}
+
+cases <- "https://data.cdc.gov/resource/pwn4-m3yp.json"
+deaths <- "https://data.cdc.gov/resource/r8kw-7aab.json"
+
+cases_raw <- get_cdc_data(cases)
+deaths_raw <- get_cdc_data(deaths)
+```
+
+```{r}
+# save data
+saveRDS(pop_raw, file = "data/pop_raw.rds")
+saveRDS(cases_raw, file = "data/cases_raw.rds")
+saveRDS(deaths_raw, file = "data/deaths_raw.rds")
+```
+
+```{r}
+# cases data set
+cases_raw  = cases_raw |>
+  select(start_date, state, new_cases) |>  # Keep only relevant columns
+  mutate(
+    week = epiweek(start_date),
+    # Extract MMWR week from start_date
+    year = epiyear(start_date),
+    # Extract MMWR year from start_date
+    cases = as.integer(new_cases) # Convert new_cases to integer for consistency
+  ) |>
+  select(-start_date, -new_cases)
+head(cases_raw)
+```
+
+```{r}
+# deaths data set
+deaths_raw <- deaths_raw |> 
+  select(state, year, week = mmwr_week, 
+         deaths = covid_19_deaths,
+         tot_deaths = total_deaths,
+         percent_of_expected_deaths) |>
+  mutate(year = case_when(str_detect(year, '/') ~ 
+           str_extract(year, "(?<=/)[0-9]+"), # if year contains /, e.g. 2019/2020, then only keep after the /
+         TRUE ~ year)) |>
+  # transfer into numeric type
+  mutate(year = as.numeric(year),
+         week = as.numeric(week),
+         deaths = as.numeric(deaths),
+         tot_deaths = as.numeric(tot_deaths),
+         percent_of_expected_deaths = as.numeric(percent_of_expected_deaths)) |>
+  # calculate the excess_mortality
+  mutate(excess_rate = percent_of_expected_deaths - 100, 
+         excess_mortality = round(
+    tot_deaths - tot_deaths/(percent_of_expected_deaths/100), 2)) |>
+  select(-percent_of_expected_deaths)
+print(head(deaths_raw))
+```
+
+#Task 1
+
+```{r}
+# Make dates data frame
+all_dates <- data.frame(date = seq(make_date(2020, 4, 1), make_date(2024, 7, 1), by = "week")) |>
+  mutate(date = ceiling_date(date, unit = "week", week_start = 7) - days(1)) |>
+  mutate(mmwr_year = epiyear(date), mmwr_week = epiweek(date))
+
+dates_and_pop <- cross_join(all_dates, data.frame(state = unique(population$state))) |> 
+  left_join(population, by = c("state", "mmwr_year" = "year"))
+```
+
+```{r}
+dat <- dates_and_pop |>
+  left_join(cases_raw, by = c("state", 
+                              "mmwr_week" = "week",
+                              "mmwr_year" = "year"))|>
+  left_join(deaths_raw, by = c("state_name" = "state",
+                               "mmwr_year" = "year",
+                               "mmwr_week" = "week"))|>
+  mutate(
+    cases = replace_na(cases, 0),
+    deaths = replace_na(deaths, 0),
+    tot_deaths = replace_na(tot_deaths, 0),
+    excess_rate = replace_na(excess_rate, 0)
+  )
+```
+
+```{r}
+dat1 = dat |>
+  mutate(
+    cases_rate = (cases / population) * 100000,
+    deaths_rate = (deaths / population) * 100000,
+  ) |>
+  pivot_longer(
+    cols = c(cases_rate, deaths_rate, excess_rate),
+    names_to = "name",
+    values_to = "rate"
+  )
+
+wave_periods <- tibble(
+  xmin = as.Date(c("2020-03-01", "2020-10-01", "2021-07-01")),
+  xmax = as.Date(c("2020-06-30", "2021-02-28", "2021-10-31")),
+  wave = c("Wave 1", "Wave 2", "Wave 3")
+)
+```
+
+```{r}
+p1 <- ggplot(dat1, aes(
+  x = date,
+  y = rate,
+  group = state,
+  color = factor(region)
+)) +
+  geom_rect(data = wave_periods,
+            aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+            inherit.aes = FALSE,
+            fill = "grey70", alpha = 0.3) +
+  geom_line(show.legend = TRUE) +
+  facet_wrap(~ name, scales = "free_y", ncol = 1) +
+  labs(title = "COVID-19 Case and Death Rates by Region",
+       subtitle = "Shaded areas indicate pandemic waves",
+       x = "Date", y = "Rate per 100,000") +
+  theme_minimal()
+p1
+```
+
+We are dividing the pandemic period from 2020/1/25 to 2021/12/31 into three waves.
+
+Wave 1: March 2020 – June 2020 A sharp spike in deaths per 100,000 is seen during early 2020, especially in regions 1–3. Case rates are relatively low (likely due to limited testing), but the early death rate surge suggests this was the initial major wave.
+
+Wave 2: October 2020 – February 2021 Both case and death rates show a dramatic rise, with a peak around January 2021. This is the most intense wave in terms of simultaneous peaks across all regions, in both metrics. Clear, synchronized spikes support this as the largest national wave.
+
+Wave 3: July 2021 – October 2021 A resurgence in cases, peaking around August–September 2021. Death rates also increase, though less sharply than Wave 2. This wave aligns with the Delta variant surge and is clearly visible across most regions.
+
+#Task 2
+
+```{r}
+dat1 <- dat1 |>
+  mutate(wave = case_when(
+    date >= as.Date("2020-03-01") & date <= as.Date("2020-06-30") ~ "Wave 1",
+    date >= as.Date("2020-10-01") & date <= as.Date("2021-02-28") ~ "Wave 2",
+    date >= as.Date("2021-07-01") & date <= as.Date("2021-10-31") ~ "Wave 3"
+  ))
+```
+
+```{r}
+wave_deaths_by_state <- dat1 |>
+  filter(name == "deaths_rate", 
+         !is.na(wave), !is.na(deaths)) |>
+  group_by(state_name, wave) |>
+  summarise(total_death_rate = sum(rate, na.rm = TRUE), .groups = "drop") |>
+  mutate(death_rate_group = cut(
+    total_death_rate,
+    breaks = quantile(total_death_rate,
+                      probs = c(0, 1/3, 2/3, 1),
+                      na.rm = TRUE),
+    labels = c("Low", "Medium", "High"),
+    include.lowest = T
+  ))
+```
+
+```{r}
+p2 <- ggplot(wave_deaths_by_state, aes(
+  x = reorder(state_name, -total_death_rate), 
+  y = wave, fill = death_rate_group)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(
+    name = "Deaths per 100k",
+    values = c(
+      "Low"="skyblue", "Medium"="gold3", "High"="red3")) +
+  labs(title = "COVID-19 Death Rate by State and Wave",
+       x = "State", y = "Wave") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p2
+```
+
+```{r}
+top3 <- wave_deaths_by_state %>%
+  group_by(wave) %>%
+  arrange(desc(total_death_rate)) %>%
+  slice_head(n = 3)
+
+bottom3 <- wave_deaths_by_state %>%
+  group_by(wave) %>%
+  arrange(total_death_rate) %>%
+  slice_head(n = 3)
+
+top_bottom <- bind_rows(top3, bottom3) %>%
+  arrange(wave, desc(total_death_rate))
+
+p3 <- ggplot(top_bottom, aes(x = reorder(state_name, total_death_rate), y = total_death_rate, fill = wave)) +
+  geom_col() +
+  facet_wrap(~ wave, scales = "free_y") +
+  coord_flip() +
+  scale_fill_viridis_d() +
+  labs(title = "Top 3 and Bottom 3 States by COVID-19 Death Rate per Wave",
+       x = "State",
+       y = "Deaths per 100,000") +
+  theme_minimal()
+p3
+```
+
+In Wave 1: New Jersey (149k), Connecticut (122k) and Massachusetts (110k) is the top three states, which is very high death rates early in the pandemic. Alaska, Hawaii and Montana have zero death rate which has the lowest death rate states.
+
+In Wave 2: South Dakota (188k), North Dakota (176k), Oklahoma (168k) show very high intensity in the bright yellow-green color, suggesting a severe outbreak in the pandemic. Alaska (26k), Vermont (11k) and Hawaii (9k) are the top 3 lowest death rate states during the most strong pandemic wave.
+
+In Wave 3: Florida (108k), Mississippi (97k), Alabama (95k), from grass green to light green color. District of Columbia (12k), Rhode Island (12k) and Vermont (9k) are the the top 3 lowest death rate states during the wave 3.
+
+```{r}
+library(gganimate)
+library(usmap)
+
+state_map <- usmap::us_map() |>
+  distinct(full = full, abbr = abbr)
+
+map_data <- dat1 |>
+  filter(name == "deaths_rate") |>
+  group_by(state_name, date) |>
+  summarise(rate = sum(rate, na.rm = TRUE), .groups = "drop") |>
+  inner_join(state_map, by = c("state_name" = "full")) |>
+  rename(state = abbr)
+
+p <- plot_usmap(data = map_data, values = "rate", regions = "states") +
+  scale_fill_viridis_c(name = "Deaths per 100k") +
+  labs(title = "COVID-19 Weekly Death Rates by State",
+       subtitle = "Week of {frame_time}",
+       caption = "Source: dat1") +
+  transition_time(date) +
+  ease_aes("linear") +
+  theme(legend.position = "right")
+
+anim <- animate(p, nframes = 100, fps = 5, width = 1000, height = 600, renderer = av_renderer())
+
+anim
+```
+
+```{r}
+# save anim
+# anim_save("C:/Users/zyq11/Desktop/COVID_death_animation.mp4",
+#           animation = anim)
+```
+
+#Task 3
+
+```{r}
+cfr_wave <- dat1 |>
+  pivot_wider(names_from = name, values_from = rate) |>
+  filter(!is.na(wave), cases_rate > 0) |>
+  group_by(wave) |>
+  summarize(
+    total_deaths = sum(deaths_rate, na.rm = T),
+    total_cases = sum(cases_rate, na.rm = T),
+    cfr = (total_deaths / total_cases) * 100
+  )
+```
+
+```{r}
+p4 <- ggplot(cfr_wave, aes(x = wave, y = cfr, fill = cfr)) +
+  geom_col(width = 0.6, color = "white", show.legend = FALSE) +
+  geom_text(aes(label = round(cfr, 2)), 
+            vjust = -0.5, size = 5, color = "black") +
+  scale_fill_gradient(low = "cyan4", high = "gold3") +
+  labs(
+    title = "Case Fatality Rate (CFR) by COVID-19 Wave",
+    subtitle = "Death rate among confirmed COVID-19 cases",
+    x = "Wave",
+    y = "CFR (%)"
+  ) +
+  ylim(0, max(cfr_wave$cfr) + 1) +
+  theme_minimal(base_size = 15)
+p4
+```
+
+# Task 4
+
+```{r}
+# Scatter plot of Cases rate and Excess Mortality rate 
+dat1_wide <- dat1 |>
+  filter(name %in% c("cases_rate", "excess_rate")) |>
+  pivot_wider(names_from = name, values_from = rate)
+
+p5 <- dat1_wide |>
+  filter(!is.na(wave)) |>
+  ggplot(aes(x = cases_rate, 
+             y = excess_rate, color = wave)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "cyan4") +  
+  facet_wrap(~ wave) +  
+  theme_minimal() +
+  labs(title = "Scatterplot of Cases Rate vs Excess Mortality Rate by Wave",
+       x = "Cases Rate", y = "Excess Mortality Rate")
+p5
+```
+
+```{r}
+dat1_wide <- dat1_wide |>
+  mutate(month = floor_date(date, unit = "month"),
+         month_fct = as.factor(month))
+
+
+dat_by_wave <- dat1_wide |>
+  filter(wave %in% c("Wave 1", "Wave 2", "Wave 3")) |>
+  split(~ wave)
+
+lm_by_wave <- lapply(dat_by_wave, function(df) {
+  lm(excess_rate ~ cases_rate, data = df)
+})
+
+#wave prediction ci
+all_preds <- list()
+
+for (train_wave in names(lm_by_wave)) {
+  for (test_wave in names(dat_by_wave)) {
+    model <- lm_by_wave[[train_wave]]
+    test_data <- dat_by_wave[[test_wave]]
+    
+    preds_df <- as.data.frame(predict(model, newdata = test_data, interval = "confidence", level = 0.95))
+    
+    all_preds[[paste(train_wave, test_wave, sep = "_on_")]] <- cbind(
+      model_wave = train_wave,
+      test_wave = test_wave,
+      test_data,
+      preds_df
+    )
+  }
+}
+
+results_ci <- bind_rows(all_preds)
+
+wave2_on_wave3 <- results_ci |>
+  filter(model_wave == "Wave 2", test_wave == "Wave 3") |>
+  mutate(
+    residuals = excess_rate - fit,
+    within_CI = ifelse(excess_rate >= lwr 
+                       & excess_rate <= upr, 
+                       "Inside CI", "Outside CI")
+  )
+```
+
+#Summary table for prediction
+
+```{r}
+#RMSE
+summary_stats <- results_ci |>
+  filter(complete.cases(excess_rate, fit)) |>
+  group_by(model_wave, test_wave) |>
+  summarise(rmse = sqrt(mean((excess_rate - fit)^2)),
+            r2 = cor(excess_rate, fit)^2,
+            .groups = "drop")
+
+summary_stats |>
+  mutate(RMSE = round(rmse, 2),
+         R2 = round(r2, 3)) |>
+  select(model_wave, test_wave, RMSE, R2) |>
+  kable(
+    caption = "Cross-Wave Prediction Performance (Linear Model)",
+    col.names = c("Trained on", "Tested on", "RMSE", "R²")
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+
+$$
+\text{Excess Mortality Rate} = \beta_0 + \beta_1 \cdot \text{Cases Rate}
+$$
+
+$$
+\hat{y}_{\text{LOESS}}(x_0) = \sum_{i=1}^{n} w_i(x_0) \cdot y_i
+$$
+
+$$
+\hat{y}_{\text{spline}} = \beta_0 + \sum_{j=1}^{5} \beta_j B_j(x)
+$$
+
+```{r}
+wave2_on_wave3_sorted <- wave2_on_wave3 |> arrange(cases_rate)
+
+lm_fit <- lm(excess_rate ~ cases_rate, data = wave2_on_wave3_sorted)
+wave2_on_wave3_sorted$lm_pred <- predict(lm_fit)
+
+loess_fit <- loess(excess_rate ~ cases_rate, data = wave2_on_wave3_sorted, span = 0.15)
+wave2_on_wave3_sorted$loess_pred <- predict(loess_fit)
+
+spline_fit <- lm(excess_rate ~ bs(cases_rate, df = 6), data = wave2_on_wave3_sorted)
+wave2_on_wave3_sorted$spline_pred <- predict(spline_fit)
+
+p6 <- ggplot(wave2_on_wave3_sorted |> filter(cases_rate <= 1000), aes(x = cases_rate)) +
+  geom_point(aes(y = excess_rate), color = "gold3", alpha = 0.5) +
+  geom_line(aes(y = lm_pred), color = "cyan4", size = 1, linetype = "dashed") +
+  geom_line(aes(y = loess_pred), color = "blue", size = 1) +
+  geom_line(aes(y = spline_pred), color = "darkred", size = 1) +
+  labs(
+    title = "Excess Mortality Rate: Linear vs LOESS vs Cubic Spline",
+    subtitle = "Wave 2 model applied to Wave 3 data (Cases ≤ 900)",
+    x = "Cases Rate", y = "Excess Mortality Rate",
+    caption = "Orange = actual | Dashed cyan = linear | Blue = LOESS | Red = Spline"
+  ) +
+  theme_minimal()
+p6
+```
+
+# wave predict example
+
+```{r}
+w1_on_w2 <- results_ci |> filter(model_wave == "Wave 1", test_wave == "Wave 2")
+w3_on_w2 <- results_ci |> filter(model_wave == "Wave 3", test_wave == "Wave 2")
+
+w1_on_w2$Model <- "Trained on Wave 1"
+w3_on_w2$Model <- "Trained on Wave 3"
+
+combined <- bind_rows(w1_on_w2, w3_on_w2) |> arrange(cases_rate)
+
+library(ggplot2)
+
+p7 <- ggplot(combined, aes(x = cases_rate, y = excess_rate, color = Model)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_line(aes(y = fit), size = 1.2) +
+  facet_wrap(~Model) +
+  labs(
+    title = "Comparison: Wave 1 vs. Wave 3 Model on Wave 2 Data",
+    subtitle = "How well do models trained on different waves predict Wave 2?",
+    x = "Cases Rate (per 100,000)",
+    y = "Excess Mortality Rate"
+) +
+  theme_minimal() +
+  scale_color_manual(values = c("Trained on Wave 1" = "darkred", "Trained on Wave 3" = "blue"))
+p7
+```
+
+# Task 5
+
+```{r}
+wave_excess_by_state <- dat1 |>
+  filter(name == "excess_rate", 
+         !is.na(wave), !is.na(deaths)) |>
+  group_by(state_name, wave) |>
+  summarise(total_excess_rate = sum(rate, na.rm = TRUE), .groups = "drop") |>
+  mutate(excess_rate_group = cut(
+    total_excess_rate,
+    breaks = quantile(total_excess_rate,
+                      probs = c(0, 1/3, 2/3, 1),
+                      na.rm = TRUE),
+    labels = c("Low", "Medium", "High"),
+    include.lowest = T
+  ))
+```
+
+```{r}
+p8 <- ggplot(wave_excess_by_state, aes(
+  x = reorder(state_name, -total_excess_rate), 
+  y = wave, fill = excess_rate_group)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(
+    name = "Excess Mortality per 100k",
+    values = c(
+      "Low"="skyblue", "Medium"="gold3", "High"="red3")) +
+  labs(title = "COVID-19 Excess Mortality Rate by State and Wave",
+       x = "State", y = "Wave") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p8
+```
+
+```{r}
+# to find the top/bottom three total excess mortality state
+top3_excess <- wave_excess_by_state |>
+  group_by(wave) |>
+  arrange(desc(total_excess_rate)) |>
+  slice_head(n = 3)
+
+bottom3_excess <- wave_excess_by_state |>
+  group_by(wave) |>
+  arrange(total_excess_rate) |>
+  slice_head(n = 3)
+
+top_bottom_excess <- bind_rows(top3_excess, bottom3_excess) |>
+  arrange(wave, desc(total_excess_rate))
+
+# visualize the top / bottom three state
+p9 <- ggplot(top_bottom_excess, aes(x = reorder(state_name, total_excess_rate), y = total_excess_rate, fill = wave)) +
+  geom_col() +
+  facet_wrap(~ wave, scales = "free_y") +
+  coord_flip() +
+  scale_fill_viridis_d() +
+  labs(title = "Top 3 and Bottom 3 States by COVID-19 Excess Mortality Rate per Wave",
+       x = "State",
+       y = "Excess Mortality Rate") +
+  theme_minimal()
+
+p9
+```
+
+## Save plot
+
+```{r}
+# save plot1
+# p1 <- p1 + theme_classic() +
+#   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+# ggsave(filename =  "C:/Users/zyq11/Desktop/final-project/plot/p1.png",
+#        plot = p1,
+#        width = 12, height = 6, dpi = 300)
+```
