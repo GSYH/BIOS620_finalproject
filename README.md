@@ -52,7 +52,7 @@ All datasets were cleaned, merged, and standardized using **MMWR week-based time
 
 Visualizations of weekly trends overlaid with wave intervals illustrate the dynamics of the pandemic across U.S. regions.
 
-   <img src=plot/p1.png>
+   <img src=final-project/plot/p1.png>
 
 Pandemic waves were identified based on synchronized surges in case rates, death rates, and excess mortality across the United States. The three main waves are defined as follows:
 
@@ -78,9 +78,9 @@ mutate(death_rate_group = cut(
 ```
 - **Outputs**: <br>
    Heatmaps displaying wave-specific death rate classifications across states.
-  <img src=plot/p2.png>
+  <img src=final-project/plot/p2.png>
    Bar plots highlighting the top and bottom 3 states by death rate in each wave.
-  <img src=plot/p3.png>
+  <img src=final-project/plot/p3.png>
 
 <br>
 
@@ -89,7 +89,7 @@ $$
 \text{CFR} = \left( \frac{\text{Total Deaths from Disease}}{\text{Total Confirmed Cases}} \right) \times 100
 $$
 
- <img src=plot/p4.png>
+ <img src=final-project/plot/p4.png>
 
 <br>
 
@@ -121,7 +121,7 @@ We trained models on Wave 2 data and applied them to predict excess mortality ra
   ```
 A comparative plot was generated to visualize how linear, LOESS, and spline models fit the Wave 3 data, with a focus on cases ≤ 1000 per 100,000 population.
 Output:
-<img src=plot/p6.png>
+<img src=final-project/plot/p6.png>
 
 ### 2. Cross-Wave Prediction and Performance Evaluation
 We performed cross-wave predictions by fitting models on one wave and testing them on other waves.
@@ -146,7 +146,7 @@ summary_stats |>
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
 ```
 Performance Table:
-<img src=plot/RMSE.jpg>
+<img src=final-project/plot/RMSE.jpg>
 
 ### 3. Comparing Wave 1 vs Wave 3 Models for Predicting Wave 2
 To examine model generalizability, we compared:
@@ -160,7 +160,7 @@ w1_on_w2$Model <- "Trained on Wave 1"
 w3_on_w2$Model <- "Trained on Wave 3"
 ```
 Output:
-<img src=plot/p7.png>
+<img src=final-project/plot/p7.png>
 
 <br>
 
@@ -168,9 +168,9 @@ Output:
 - **State Classification**
 - - **Outputs**: <br>
    Heatmaps displaying wave-specific excess mortality classifications across states.
-  <img src=plot/p8.png>
+  <img src=final-project/plot/p8.png>
    Bar plots highlighting the top and bottom 3 states by excess mortality in each wave.
-  <img src=plot/p9.png>
+  <img src=final-project/plot/p9.png>
 
 <br>
 
