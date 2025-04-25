@@ -101,9 +101,9 @@ deaths_raw <- get_cdc_data(deaths)
 
 ```{r}
 # save data
-saveRDS(pop_raw, file = "data/pop_raw.rds")
-saveRDS(cases_raw, file = "data/cases_raw.rds")
-saveRDS(deaths_raw, file = "data/deaths_raw.rds")
+# saveRDS(pop_raw, file = "data/pop_raw.rds")
+# saveRDS(cases_raw, file = "data/cases_raw.rds")
+# saveRDS(deaths_raw, file = "data/deaths_raw.rds")
 ```
 
 ```{r}
