@@ -1,9 +1,32 @@
-# BIOS620 Final Project
+# BIOS620 Final Project 
+**Analysis of the COVID-19 Cases Rate and Excess Mortality Rate by Pandemic Wave**
 
 This repository contains code and slides for the final project in **BIOSTAT 620 Introduction to Health Data Science**.
 
-## Project Title
-**Analysis of the COVID-19 Cases Rate and Excess Mortality Rate by Pandemic Wave**
+## Data Preparation
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## Summary
 We investigate how COVID-19 case rates relate to excess mortality across different pandemic waves in the U.S. Using CDC and Census Bureau data, we:
