@@ -20,7 +20,7 @@ This structure ensures full reproducibility of our results and allows users to e
 
 ## Before You Start
 
-To ensure the code runs correctly, please **download the entire repository as a ZIP file** rather than only the `final-project.qmd` file. This ensures all linked datasets and supporting folders (e.g., `data/`, `code/`, `plot/`) are accessible during execution.
+To ensure the code runs correctly, please **download the entire repository as a ZIP file** rather than only the `final-project.qmd` file. This ensures all linked datasets and supporting folders (e.g., `data/`, `code/`) are accessible during execution.
 
 ## Table of Contents
 - [Data Preparation](#data-preparation)
