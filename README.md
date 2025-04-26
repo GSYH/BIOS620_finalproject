@@ -1,7 +1,7 @@
 # Analysis of the COVID-19 Cases Rate and Excess Mortality Rate by Pandemic Wave
 
-This GitHub repository contains all source files and outputs for our final project titled “Analysis of the COVID-19 Case Rate and Excess Mortality Rate by Pandemic Wave.” The project is organized within a main folder named final-project, which contains the following subdirectories:
-	- **code/: Contains all R scripts and Quarto files used for data preprocessing, analysis, and visualization.
+## This GitHub repository contains all source files and outputs for our final project titled “Analysis of the COVID-19 Case Rate and Excess Mortality Rate by Pandemic Wave.” The project is organized within a main folder named final-project, which contains the following subdirectories:
+	-ode/: Contains all R scripts and Quarto files used for data preprocessing, analysis, and visualization.
 	- **data/: Includes raw and processed datasets such as population estimates and CDC surveillance files.
 	- **plot/: Stores all figures generated from the analysis, including time series plots, heatmaps, and model comparisons.
 
