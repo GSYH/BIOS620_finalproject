@@ -17,6 +17,11 @@ In the repository’s root directory, you will also find:
 
 This structure ensures full reproducibility of our results and allows users to easily navigate between source code, data inputs, and analytical outputs.
 
+
+## Before You Start
+
+To ensure the code runs correctly, please **download the entire repository as a ZIP file** rather than only the `final-project.qmd` file. This ensures all linked datasets and supporting folders (e.g., `data/`, `code/`, `plot/`) are accessible during execution.
+
 ## Table of Contents
 - [Data Preparation](#data-preparation)
 - [Pandemic waves identification](#pandemic-waves-identification)
