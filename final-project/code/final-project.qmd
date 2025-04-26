@@ -320,9 +320,9 @@ p <- plot_usmap(data = map_data, values = "rate", regions = "states") +
   ease_aes("linear") +
   theme(legend.position = "right")
 
-anim <- animate(p, nframes = 100, fps = 5, width = 1000, height = 600, renderer = av_renderer())
+# anim <- animate(p, nframes = 100, fps = 5, width = 1000, height = 600, renderer = av_renderer())
 
-anim
+# anim
 ```
 
 ```{r}
