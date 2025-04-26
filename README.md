@@ -12,7 +12,8 @@ In the repository’s root directory, you will also find:
 
 - **`final-project.qmd`**: The primary Quarto document used to render the analysis plot and model.
 - **`BIOSAT 620-Final Project.pptx`**: The accompanying slide deck summarizing our findings.
-- **`BIOS_620_Final_Project_Report`**: The final report for our analysis.
+- **`BIOS_620_Final_Project_Report.pdf`**: The final report for our analysis.
+- **`BIOS_620_Final_Project_Report.pdf`**:
 - **`README.md`**: This file provides a project description, instructions.
 
 This structure ensures full reproducibility of our results and allows users to easily navigate between source code, data inputs, and analytical outputs.
